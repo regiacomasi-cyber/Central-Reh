@@ -375,6 +375,28 @@ elif pag == "5 - Oportunidades":
                              use_container_width=True)
             else:
                 st.info("Informe estoques na aba Preços para ver a cobertura.")
+        st.subheader("Enviar para o Full (curva A)")
+        from app import proxima_campanha as _pc
+        nome_camp, dias_camp, extra = _pc()
+        st.write(f"Campanha chegando: **{nome_camp}** em {dias_camp} dias → reserva extra de {extra*100:.0f}%.")
+        fl = []
+        for x in [r for r in res if r.get("classe") == "A"]:
+            daily = x["qtd"]/30
+            if daily <= 0:
+                continue
+            est = x.get("est", 0) or 0
+            for d in (15, 30):
+                q = max(0, int(d*daily*(1+extra)-est+0.5))
+                fl.append({"Produto": x["produto"][:50], "Venda/dia": round(daily, 1),
+                           "Estoque": est, f"Enviar {d}d": q,
+                           f"Atende {d}d": f"{(est+q)/daily:.0f} dias"})
+        if fl:
+            st.dataframe(pd.DataFrame(sorted(fl, key=lambda r: -r["Enviar 30d"])),
+                         use_container_width=True)
+        st.subheader("Campanhas")
+        st.write(f"Próxima: **{nome_camp}** em {dias_camp} dias. "
+                 "30 dias antes: verba e campeões · 15 dias: estoque e fotos · "
+                 "7 dias: cupons, kits e preços · No dia: monitore de hora em hora.")
 
 # ==================== 6 CONCORRÊNCIA ====================
 elif pag == "6 - Concorrência":
