@@ -19,7 +19,7 @@ st.markdown(
     "</div>", unsafe_allow_html=True)
 
 for k, v in {"dados": [], "resultado": [], "total": 0, "conc": {},
-             "saude": {}, "hist": [], "p_de": "", "p_ate": ""}.items():
+             "saude": {}, "hist": [], "p_de": "", "p_ate": "", "ajustes": {}}.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -102,14 +102,14 @@ if pag == "1 - Vendas":
                 res, tot = motor.classificar(dados)
                 st.session_state.resultado = res
                 st.session_state.total = tot
+                import copy as _copy
                 st.session_state.hist = [h for h in st.session_state.hist if h["periodo"] != per]
                 st.session_state.hist.append({
                     "periodo": per, "total": tot,
+                    "dados": _copy.deepcopy(dados),
                     "produtos": {x["produto"]: {"qtd": x["qtd"], "fat": x["fat"],
                                                "classe": x["classe"]} for x in res},
-                    "saude": {"cancelados": saude.get("cancelados", 0),
-                              "v_cancelado": round(saude.get("v_cancelado", 0.0), 2),
-                              "total": saude.get("total", 0)}})
+                    "saude": _copy.deepcopy(saude)})
                 ok += 1
             except Exception as e:
                 st.error(f"{up.name}: {e}")
@@ -121,6 +121,24 @@ if pag == "1 - Vendas":
 # ==================== 2 CURVA ====================
 elif pag == "2 - Curva ABC":
     st.header("Curva ABC")
+    pers = [h["periodo"] for h in st.session_state.hist]
+    if len(pers) > 1:
+        ativa = st.selectbox("Planilha em análise", pers, index=len(pers)-1,
+                             help="Troque para analisar outra planilha em todas as abas.")
+        h_ativa = next(h for h in st.session_state.hist if h["periodo"] == ativa)
+        if h_ativa.get("dados"):
+            import copy as _copy2
+            dados = _copy2.deepcopy(h_ativa["dados"])
+            for x in dados:
+                aj = st.session_state.ajustes.get(x["produto"])
+                if aj:
+                    x["custo"] = aj.get("custo", x.get("custo", 0) or 0)
+                    x["est"] = aj.get("est", x.get("est", 0) or 0)
+            st.session_state.dados = dados
+            st.session_state.saude = _copy2.deepcopy(h_ativa.get("saude", {}))
+            res2, tot2 = motor.classificar(st.session_state.dados)
+            st.session_state.resultado = res2
+            st.session_state.total = tot2
     res = st.session_state.resultado
     if not res:
         st.warning("Importe na etapa 1 - Vendas.")
@@ -244,6 +262,7 @@ elif pag == "3 - Preços":
             for i, x in enumerate(res):
                 x["custo"] = float(edit.iloc[i]["Custo"])
                 x["est"] = int(edit.iloc[i]["Estoque"])
+                st.session_state.ajustes[x["produto"]] = {"custo": x["custo"], "est": x["est"]}
             linhas = []
             for x in res:
                 pm = x["fat"]/x["qtd"] if x["qtd"] else 0
