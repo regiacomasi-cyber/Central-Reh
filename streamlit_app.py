@@ -337,6 +337,45 @@ elif pag == "5 - Oportunidades":
         rows.sort(key=lambda r: -r[4])
         st.dataframe(pd.DataFrame(rows[:25], columns=["Produto", "CL", "Problema", "Ação", "Impacto"]),
                      use_container_width=True)
+        st.subheader("Plano do especialista: onde investir e onde não investir")
+        st.caption("Com base nas vendas dos últimos meses + margem de cada produto.")
+        hist = st.session_state.hist
+        plano = []
+        movs = {}
+        if len(hist) >= 2:
+            pa = hist[-2]["produtos"]
+            pb = hist[-1]["produtos"]
+            for p in pb:
+                if p in pa:
+                    movs[p] = pb[p]["fat"]-pa[p]["fat"]
+        for x in res:
+            pm = x["fat"]/x["qtd"] if x["qtd"] else 0
+            cu = x.get("custo", 0) or 0
+            mg = ((pm-cu)/pm if pm and cu else 0)*100
+            d = movs.get(x["produto"], 0)
+            if x["classe"] == "A" and (not cu or mg >= 15) and d >= 0:
+                plano.append((x["produto"][:50], "INVESTIR MAIS", "Campeão com margem e demanda. Dobrar verba aqui.",
+                              f"{mg:.0f}%" if cu else "s/ custo"))
+            elif x["classe"] == "A" and d < 0:
+                plano.append((x["produto"][:50], "INVESTIR (com ajuste)", "Campeão caindo: revisar preço/foto e manter.",
+                              f"{mg:.0f}%" if cu else "s/ custo"))
+            elif x["classe"] == "B" and d > 0:
+                plano.append((x["produto"][:50], "TESTAR", "Subindo: verba de teste para virar campeão.",
+                              f"{mg:.0f}%" if cu else "s/ custo"))
+            elif x["classe"] == "C" or (cu and mg < 8):
+                plano.append((x["produto"][:50], "NÃO INVESTIR", "Só em kit com campeão. Verba solo é prejuízo.",
+                              f"{mg:.0f}%" if cu else "s/ custo"))
+            else:
+                plano.append((x["produto"][:50], "MANTER", "Segue o plano atual, sem mexer.",
+                              f"{mg:.0f}%" if cu else "s/ custo"))
+        dfp = pd.DataFrame(plano, columns=["Produto", "Veredito", "Por quê", "Margem"])
+        cores = {"INVESTIR MAIS": "background-color:#DFF5DF;color:#1E7E34;font-weight:bold",
+                 "INVESTIR (com ajuste)": "background-color:#DFF5DF",
+                 "TESTAR": "background-color:#FFF3D6",
+                 "NÃO INVESTIR": "background-color:#FFCDD2;color:#B71C1C;font-weight:bold",
+                 "MANTER": ""}
+        st.dataframe(dfp.style.applymap(
+            lambda v: cores.get(v, ""), subset=["Veredito"]), use_container_width=True)
         e1, e2 = st.columns(2)
         with e1:
             st.subheader("Montar kit")
@@ -379,6 +418,10 @@ elif pag == "5 - Oportunidades":
         from app import proxima_campanha as _pc
         nome_camp, dias_camp, extra = _pc()
         st.write(f"Campanha chegando: **{nome_camp}** em {dias_camp} dias → reserva extra de {extra*100:.0f}%.")
+        st.subheader("Enviar para o Full (curva A)")
+        from app import proxima_campanha as _pc
+        nome_camp, dias_camp, extra = _pc()
+        st.write(f"Campanha chegando: **{nome_camp}** em {dias_camp} dias → reserva extra de {extra*100:.0f}%.")
         fl = {}
         for x in [r for r in res if r.get("classe") == "A"]:
             daily = x["qtd"]/30
@@ -392,8 +435,28 @@ elif pag == "5 - Oportunidades":
                 row[f"Enviar {d}d"] = q
                 row[f"Atende {d}d"] = f"{(est+q)/daily:.0f} dias"
         if fl:
-            st.dataframe(pd.DataFrame(sorted(fl.values(), key=lambda r: -r["Enviar 30d"])),
+            dff = pd.DataFrame(sorted(fl.values(), key=lambda r: -r["Enviar 30d"]))
+            t15, t30 = int(dff["Enviar 15d"].sum()), int(dff["Enviar 30d"].sum())
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Enviar (15 dias)", f"{t15} un")
+            k2.metric("Enviar (30 dias)", f"{t30} un")
+            k3.metric("Campeões", len(dff))
+            def _cor_full(v):
+                if isinstance(v, str) and "dias" in v:
+                    try:
+                        n = int(v.split()[0])
+                    except ValueError:
+                        return ""
+                    if n < 14:
+                        return "background-color:#FFCDD2"
+                    if n < 30:
+                        return "background-color:#FFF3D6"
+                    return "background-color:#DFF5DF"
+                return ""
+
+            st.dataframe(dff.style.applymap(_cor_full, subset=["Atende 15d", "Atende 30d"]),
                          use_container_width=True)
+            st.caption("Vermelho = acaba em <14 dias (urgente) · Amarelo = <30 dias · Verde = coberto.")
         st.subheader("Campanhas")
         st.write(f"Próxima: **{nome_camp}** em {dias_camp} dias. "
                  "30 dias antes: verba e campeões · 15 dias: estoque e fotos · "
