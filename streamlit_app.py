@@ -190,7 +190,13 @@ with abas[5]:
     else:
         nomes = [x["produto"] for x in res]
         prod = st.selectbox("Seu produto", nomes)
-        key = st.text_input("Chave SerpApi (grátis em serpapi.com)", type="password")
+        try:
+            qk = st.query_params.get("key", "")
+            if isinstance(qk, list):
+                qk = qk[0] if qk else ""
+        except Exception:
+            qk = ""
+        key = st.text_input("Chave SerpApi (grátis em serpapi.com)", value=qk, type="password")
         if st.button("Buscar sozinho"):
             if not key:
                 st.warning("Cole a chave SerpApi primeiro.")
