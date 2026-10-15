@@ -58,16 +58,6 @@ def _carregar(up, de="", ate=""):
         os.unlink(caminho)
 
 
-def _classificar():
-    res, tot = motor.classificar(st.session_state.dados)
-    st.session_state.resultado = res
-    st.session_state.total = tot
-    per = f"{st.session_state.get('p_de', '')} a {st.session_state.get('p_ate', '')}".strip(" a")
-    st.session_state.hist.append({"periodo": per or "sem período", "total": tot,
-                                  "produtos": {x["produto"]: {"qtd": x["qtd"], "fat": x["fat"],
-                                                             "classe": x["classe"]} for x in res}})
-
-
 abas = st.tabs(["1 - Vendas", "2 - Curva ABC", "3 - Preços", "4 - Ads",
                 "5 - Oportunidades", "6 - Concorrência", "7 - Cancelados"])
 
@@ -83,21 +73,37 @@ with abas[0]:
         st.session_state.resultado = []
         st.success("Exemplo carregado.")
     if arqs and st.button(f"Importar {len(arqs)} arquivo(s)"):
+        ok, falhas = 0, []
         for up in arqs:
             try:
-                dados, saude = _carregar(up, st.session_state.p_de, st.session_state.p_ate)
+                per = _periodo_arq(up.name)
+                if per:
+                    d1, d2 = per.split(" a ")
+                else:
+                    d1, d2 = st.session_state.p_de, st.session_state.p_ate
+                dados, saude = _carregar(up, d1, d2)
                 st.session_state.dados = dados
                 st.session_state.saude = saude
-                if not st.session_state.p_de:
-                    per = _periodo_arq(up.name)
-                    if per:
-                        d1, d2 = per.split(" a ")
-                        st.session_state.p_de, st.session_state.p_ate = d1, d2
-                        st.rerun()
-                _classificar()
+                st.session_state.p_de, st.session_state.p_ate = d1, d2
+                res, tot = motor.classificar(dados)
+                st.session_state.resultado = res
+                st.session_state.total = tot
+                chave = per or "sem período"
+                st.session_state.hist = [h for h in st.session_state.hist if h["periodo"] != chave]
+                st.session_state.hist.append({
+                    "periodo": chave, "total": tot,
+                    "produtos": {x["produto"]: {"qtd": x["qtd"], "fat": x["fat"],
+                                               "classe": x["classe"]} for x in res},
+                    "saude": {"cancelados": saude.get("cancelados", 0),
+                              "v_cancelado": round(saude.get("v_cancelado", 0.0), 2),
+                              "total": saude.get("total", 0)}})
+                ok += 1
             except Exception as e:
-                st.error(f"{up.name}: {e}")
-        st.success(f"{len(st.session_state.dados)} produtos na análise atual.")
+                falhas.append(f"{up.name}: {e}")
+        if ok:
+            st.success(f"{ok} arquivo(s) importado(s). Histórico: {len(st.session_state.hist)} período(s) — compare na aba 2.")
+        for f in falhas:
+            st.error(f)
     if st.session_state.dados:
         st.info(f"{len(st.session_state.dados)} produtos carregados.")
 
