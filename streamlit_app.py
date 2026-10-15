@@ -24,7 +24,7 @@ for k, v in {"dados": [], "resultado": [], "total": 0, "conc": {},
         st.session_state[k] = v
 
 PASSOS = ["1 - Vendas", "2 - Curva ABC", "3 - Preços", "4 - Ads",
-          "5 - Oportunidades", "6 - Concorrência", "7 - Cancelados"]
+          "5 - Oportunidades", "6 - Concorrência", "7 - Cancelados", "8 - Mês x Mês"]
 DICAS = {
     "1 - Vendas": "Mande 1 ou várias planilhas (segure Ctrl). Cada uma vira um mês no histórico.",
     "2 - Curva ABC": "Verde = campeões (A). Amarelo = podem crescer (B). Cinza = parados (C).",
@@ -33,9 +33,36 @@ DICAS = {
     "5 - Oportunidades": "Sua fila de trabalho: prioridades, kits, ruptura, Full e campanhas.",
     "6 - Concorrência": "Busque os 4 mais vendidos e compare preço, vendas e oferta.",
     "7 - Cancelados": "Quem cancela, quanto se perde e o que corrigir (precisa do Order).",
+    "8 - Mês x Mês": "Comparativo entre 2 meses + onde trabalhar primeiro.",
 }
 pag = st.sidebar.radio("Passo a passo", PASSOS)
 st.sidebar.caption("Central REH · dados ficam só na sua sessão")
+if len(st.session_state.hist) > 1:
+    st.sidebar.markdown("**Planilha em análise**")
+    pers = [h["periodo"] for h in st.session_state.hist]
+    atual = st.session_state.get("planilha_ativa", pers[-1])
+    if atual not in pers:
+        atual = pers[-1]
+    nova = st.sidebar.selectbox("Trocar de mês (vale p/ todas as abas)", pers,
+                                index=pers.index(atual), label_visibility="collapsed")
+    if nova != st.session_state.get("planilha_ativa"):
+        st.session_state.planilha_ativa = nova
+        st.rerun()
+    st.session_state.planilha_ativa = nova
+    h_ativa = next(h for h in st.session_state.hist if h["periodo"] == nova)
+    if h_ativa.get("dados"):
+        import copy as _copy2
+        dados = _copy2.deepcopy(h_ativa["dados"])
+        for x in dados:
+            aj = st.session_state.ajustes.get(x["produto"])
+            if aj:
+                x["custo"] = aj.get("custo", x.get("custo", 0) or 0)
+                x["est"] = aj.get("est", x.get("est", 0) or 0)
+        st.session_state.dados = dados
+        st.session_state.saude = _copy2.deepcopy(h_ativa.get("saude", {}))
+        res2, tot2 = motor.classificar(dados)
+        st.session_state.resultado = res2
+        st.session_state.total = tot2
 st.info("💡 " + DICAS[pag])
 
 
@@ -393,7 +420,7 @@ elif pag == "5 - Oportunidades":
                  "TESTAR": "background-color:#FFF3D6",
                  "NÃO INVESTIR": "background-color:#FFCDD2;color:#B71C1C;font-weight:bold",
                  "MANTER": ""}
-        st.dataframe(dfp.style.applymap(
+        st.dataframe(dfp.style.map(
             lambda v: cores.get(v, ""), subset=["Veredito"]), use_container_width=True)
         e1, e2 = st.columns(2)
         with e1:
@@ -473,7 +500,7 @@ elif pag == "5 - Oportunidades":
                     return "background-color:#DFF5DF"
                 return ""
 
-            st.dataframe(dff.style.applymap(_cor_full, subset=["Atende 15d", "Atende 30d"]),
+            st.dataframe(dff.style.map(_cor_full, subset=["Atende 15d", "Atende 30d"]),
                          use_container_width=True)
             st.caption("Vermelho = acaba em <14 dias (urgente) · Amarelo = <30 dias · Verde = coberto.")
         st.subheader("Campanhas")
@@ -553,3 +580,96 @@ elif pag == "7 - Cancelados":
                          "Solução": motor.solucao_motivo(mot)[:70]})
         rows.sort(key=lambda r: -r["Qtd"])
         st.dataframe(pd.DataFrame(rows[:30]), use_container_width=True)
+
+elif pag == "8 - Mês x Mês":
+    st.header("Comparativo entre 2 meses + onde trabalhar primeiro")
+    hist = st.session_state.hist
+    if len(hist) < 2:
+        st.warning("Importe 2 meses para comparar (o histórico guarda cada análise).")
+    else:
+        pers = [h["periodo"] for h in hist]
+        c1, c2 = st.columns(2)
+        p1 = c1.selectbox("De", pers, index=len(pers)-2)
+        p2 = c2.selectbox("Para", pers, index=len(pers)-1)
+        ha = next(h for h in hist if h["periodo"] == p1)
+        hb = next(h for h in hist if h["periodo"] == p2)
+        pa, pb = ha["produtos"], hb["produtos"]
+        ta, tb = ha["total"], hb["total"]
+
+        def _luc(hh):
+            tot = 0.0
+            for x in hh["produtos"].values():
+                pm = x["fat"]/x["qtd"] if x["qtd"] else 0
+                if pm:
+                    tot += x["fat"] - motor.taxa_shopee(pm)*x["qtd"]
+            return round(tot, 2)
+
+        la, lb = _luc(ha), _luc(hb)
+        qa = {c: sum(1 for x in pa.values() if x["classe"] == c) for c in "ABC"}
+        qb = {c: sum(1 for x in pb.values() if x["classe"] == c) for c in "ABC"}
+        sa, sb = ha.get("saude", {}) or {}, hb.get("saude", {}) or {}
+        pts = {"a": 0, "b": 0}
+        rows = []
+        for met, va, vb, ganha_a in [
+            ("Faturamento", f"R$ {ta:,.0f}".replace(",", "."), f"R$ {tb:,.0f}".replace(",", "."), ta >= tb),
+            ("Lucro estimado", f"R$ {la:,.0f}".replace(",", "."), f"R$ {lb:,.0f}".replace(",", "."), la >= lb),
+            ("Qtd curva A", qa["A"], qb["A"], qa["A"] >= qb["A"]),
+            ("Qtd curva C (menos é melhor)", qa["C"], qb["C"], qa["C"] <= qb["C"]),
+            ("Cancelados", sa.get("cancelados", "—"), sb.get("cancelados", "—"),
+             (sa.get("cancelados", 0) <= sb.get("cancelados", 0)) if (sa.get("total") and sb.get("total")) else None),
+        ]:
+            if ganha_a is None:
+                rows.append({"MEDIDA": met, p1[:18]: va, p2[:18]: vb})
+            elif ganha_a:
+                pts["a"] += 1
+                rows.append({"MEDIDA": met, p1[:18]: f"{va} ★", p2[:18]: vb})
+            else:
+                pts["b"] += 1
+                rows.append({"MEDIDA": met, p1[:18]: va, p2[:18]: f"{vb} ★"})
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        if pts["a"] == pts["b"]:
+            st.success("EMPATE TÉCNICO nos critérios.")
+        else:
+            w = p1 if pts["a"] > pts["b"] else p2
+            st.success(f"MELHOR MÊS: {w} ({max(pts.values())} x {min(pts.values())} nos critérios)")
+        topa = max(pa.items(), key=lambda kv: kv[1]["fat"])[0] if pa else "—"
+        topb = max(pb.items(), key=lambda kv: kv[1]["fat"])[0] if pb else "—"
+        st.subheader("Campeão de vendas")
+        if topa == topb:
+            st.write(f"**{topa[:60]}** continua campeão. Proteja com estoque e ads.")
+        else:
+            st.write(f"Antes: {topa[:55]} → **Agora: {topb[:55]}** (virou o jogo, priorize ele).")
+        subiram = sorted([p for p in pb if p in pa and pa[p]["classe"] == "C" and pb[p]["classe"] in "AB"])
+        caíram = sorted([p for p in pb if p in pa and pa[p]["classe"] == "A" and pb[p]["classe"] in "BC"])
+        e1, e2 = st.columns(2)
+        with e1:
+            st.write(f"**Subiram ({len(subiram)})**")
+            st.dataframe(pd.DataFrame([{"Produto": p[:50], "Foi para": pb[p]["classe"]}
+                                       for p in subiram[:20]]), use_container_width=True)
+        with e2:
+            st.write(f"**Caíram ({len(caíram)})**")
+            st.dataframe(pd.DataFrame([{"Produto": p[:50], "Caiu para": pb[p]["classe"]}
+                                       for p in caíram[:20]]), use_container_width=True)
+        st.subheader("ONDE TRABALHAR PRIMEIRO")
+        plano = []
+        for i, p in enumerate(caíram[:5], 1):
+            plano.append(f"**{i}. Recuperar {p[:50]}** (caiu {pa[p]['classe']} → {pb[p]['classe']}): conferir preço, foto e estoque.")
+        j = len(plano) + 1
+        db = {x["produto"]: x for x in hb.get("dados", [])}
+        sem_est = [p for p in pb if pb[p]["classe"] == "A" and not (db.get(p, {}).get("est", 0) or 0)]
+        if sem_est:
+            plano.append(f"**{j}. Proteger o campeão {topb[:45]}**: informar estoque e manter ads. "
+                         "(Isto vale para os sem estoque: " + ", ".join(p[:25] for p in sem_est[:3]) + ").")
+            j += 1
+        novos_c = [p for p in pb if (p not in pa or pa[p]["classe"] in "AB") and pb[p]["classe"] == "C"][:3]
+        for p in novos_c:
+            plano.append(f"**{j}. Girar {p[:45]}** (novo na C): montar kit com campeão.")
+            j += 1
+        mov = sorted(((pb[p]["fat"]-pa[p]["fat"], p) for p in pb if p in pa), reverse=True)
+        if mov and mov[0][0] > 0:
+            v, p = mov[0]
+            plano.append(f"**{j}. Acelerar {p[:45]}** (maior alta: +R$ {v:,.0f}".replace(",", ".") + ").")
+        for item in plano:
+            st.write(f"• {item}")
+        if not plano:
+            st.write("Nada crítico: mantenha o plano atual.")
